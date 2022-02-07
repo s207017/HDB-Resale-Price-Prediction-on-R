@@ -1,0 +1,151 @@
+install.packages("neuralnet")
+install.packages("GGally")
+install.packages("caTools")
+install.packages("ade4")
+install.packages("h2o")
+install.packages("ggthemes")
+install.packages("data.tree")
+library(devtools)
+library(maptools)
+library(rvest)
+library(dplyr)
+library(stringr)
+library(janitor)
+library(data.table)
+library(plyr)
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(reshape2)
+library(sf)
+library(httr)
+library(xml2)
+library(jsonlite)
+library(tibble)
+library(XML)
+library(geosphere)
+library(matrixStats)
+library(data.table)
+library(GGally)
+library(caTools)
+library(ade4) 
+library(randomForest)
+library(h2o)
+library(ggplot2)
+library(ggthemes)
+library(data.tree)
+
+
+#Set working directory to your folder
+#IMPORTANT
+#ONLY MODIFY 'directory' variable to the directory where the 'Final' folder is located, 'directory_constant' variable should remain unchanged
+directory <- "/Users/seunghwanchoi/Documents/y2s1/BC2406"
+##########################################################
+directory_constant <- "/Final/6. FindDistance"
+finaldirectory <- paste(directory, directory_constant, sep = "")
+setwd(finaldirectory)
+
+# Loading
+hdb_final <- read.csv('HDB_FINAL_DATA.csv')
+hdb_final
+#Cleaning
+working.df = subset(hdb_final, select = -c(address, ADDRESS, block, street_name, 
+                                           LATITUDE, LONGTITUDE, year, month, lease_commence_date))
+
+
+########################
+
+nums <- select(working.df, -c("town", "flat_type", "flat_model", "storey_range"))
+working.df <- working.df %>% mutate_at(colnames(nums), list(~scale(.) %>% as.vector))
+working.df <- working.df %>% mutate_if(sapply(working.df, is.character), as.factor)
+str(working.df)
+working.df
+
+no_amen_working.df <- select(working.df, c("town","flat_type","storey_range",
+                                           "floor_area_sqm","flat_model", 
+                                           "resale_price", "remaining_lease"))
+
+## 75% of the sample size
+smp_size <- floor(0.7 * nrow(working.df))
+## set the seed to make your partition reproducible
+set.seed(123)
+train_ind <- sample(seq_len(nrow(working.df)), size = smp_size)
+
+train <- working.df[train_ind, ]
+
+test <- working.df[-train_ind, ]
+
+
+### Demonstrating error
+h2o.init(max_mem_size = "5g") 
+h2o.removeAll()
+train <- as.h2o(train)
+test <- as.h2o(test)
+y <- "resale_price"
+x <- setdiff(names(train), y)
+n_features <- length(setdiff(names(train), "resale_price"))
+
+hyper_grid <- list(
+  mtries = floor(n_features * c(0.05, 0.15, 0.25, 0.333, 0.4)),
+  min_rows = c(1, 3, 5, 10),
+  max_depth = c(3, 6, 10),
+  sample_rate = c(.555, .632, .70, 0.8)
+)
+
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "mse",
+  stopping_tolerance = 0.001,   # stop if improvement is < 0.1%
+  stopping_rounds = 10,         # over the last 10 models
+  max_runtime_secs = 60*5      # or stop search after 5 min.
+)
+
+random_grid<- h2o.grid(
+  algorithm = "randomForest",
+  grid_id = "rf_random_grid",
+  x = x,
+  y = y,
+  nfolds = 10,
+  training_frame = train,
+  validation_frame = test,
+  hyper_params = hyper_grid,
+  ntrees = n_features * 10,
+  seed = 123,
+  stopping_metric = "RMSE",
+  stopping_rounds = 10,    #stop if last 10 trees added
+  stopping_tolerance = 0.005,  #stop improving RMSE by 0.5%
+  search_criteria = search_criteria
+)
+
+random_grid_perf <- h2o.getGrid(
+  grid_id = "rf_random_grid", 
+  sort_by = "rmse",
+  decreasing = TRUE,
+  verbose = TRUE
+)
+
+random_grid_perf
+
+bestmodel <- h2o.getModel(random_grid@model_ids[[1]])
+
+
+pred <- h2o.performance(bestmodel, test)
+pred
+r2_train <- h2o.r2(bestmodel)
+r2_test <- h2o.r2(bestmodel, valid = TRUE)
+r2_train
+r2_test
+
+exp <- h2o.explain(bestmodel, test)
+exp
+
+#without amenities
+
+
+
+
+
+
+
+
+h2o.shutdown()
